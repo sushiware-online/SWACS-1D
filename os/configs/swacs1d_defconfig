@@ -73,7 +73,7 @@ BR2_PACKAGE_ZSTD=y
 # Bootloader
 BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_X86_64_EFI=y
-BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_gpt normal efi_gop"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_gpt normal efi_gop chain shim_lock"
 
 # Image Generation & Scripts
 BR2_TARGET_ROOTFS_SQUASHFS=y
@@ -86,3 +86,6 @@ BR2_ROOTFS_OVERLAY="board/swacs1d/rootfs_overlay"
 
 # Build Speed
 BR2_CCACHE=y
+
+# Enable the Shim bootloader
+BR2_PACKAGE_SHIM=y
