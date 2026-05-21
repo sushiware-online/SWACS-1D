@@ -104,9 +104,15 @@ jobs:
       - name: Zip Provisioning Keys
         run: |
           cd authoring
+          # Copy everything from the key repository target directory
           cp ../os/board/swacs1d/keys/db.crt .
           cp ../os/board/swacs1d/keys/db.der .
-          zip test_factory_provision_keys.zip update_private.pem update_public.pem update_aes.key db.crt db.der
+          cp ../os/board/swacs1d/keys/KEK.crt .
+          cp ../os/board/swacs1d/keys/KEK.der .
+          cp ../os/board/swacs1d/keys/PK.crt .
+          cp ../os/board/swacs1d/keys/PK.der .
+          
+          zip test_factory_provision_keys.zip update_private.pem update_public.pem update_aes.key db.crt db.der KEK.crt KEK.der PK.crt PK.der
 
       - name: Clone Buildroot
         run: |
