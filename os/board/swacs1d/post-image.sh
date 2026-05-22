@@ -5,7 +5,12 @@ set -e
 BINARIES_DIR="$1"
 BOARD_DIR="board/swacs1d"
 EFI_DIR="${BINARIES_DIR}/efi-part/EFI/BOOT"
-TARGET_DIR="output/target"  # Add a reference to the compiled target rootfs directory
+
+# Dynamically compute Buildroot base directory locations safely
+BASE_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+OUTPUT_DIR="${BINARIES_DIR}/.."
+TARGET_DIR="${OUTPUT_DIR}/target"
+BUILD_DIR="${OUTPUT_DIR}/build"
 
 echo "POST-IMAGE: Preparing Secure Boot EFI directory structure..."
 
@@ -13,18 +18,30 @@ echo "POST-IMAGE: Preparing Secure Boot EFI directory structure..."
 rm -rf "${BINARIES_DIR}/efi-part"
 mkdir -p "${EFI_DIR}"
 
-# 1. Locate and Verify shimx64.efi (Check Target Root FS install path first)
+# 1. Broad Lookup Matrix for shimx64.efi
 SHIM_SRC=""
 if [ -f "${BINARIES_DIR}/shimx64.efi" ]; then
     SHIM_SRC="${BINARIES_DIR}/shimx64.efi"
 elif [ -f "${TARGET_DIR}/usr/lib/shim/shimx64.efi" ]; then
     SHIM_SRC="${TARGET_DIR}/usr/lib/shim/shimx64.efi"
-elif [ -f "output/build/shim-custom/shimx64.efi" ]; then
-    # Fallback catch-all for direct custom compilation trees
-    SHIM_SRC="output/build/shim-custom/shimx64.efi"
+elif [ -f "${TARGET_DIR}/boot/shimx64.efi" ]; then
+    SHIM_SRC="${TARGET_DIR}/boot/shimx64.efi"
 else
-    echo "ERROR: shimx64.efi could not be located in images or target spaces!"
+    # CI/CD Failover: Search inside the compiled build package direct tree space
+    SHIM_FIND=$(find "${BUILD_DIR}" -type f -name "shimx64.efi" | head -n 1)
+    if [ -n "${SHIM_FIND}" ] && [ -f "${SHIM_FIND}" ]; then
+        SHIM_SRC="${SHIM_FIND}"
+    fi
+fi
+
+# Sanity Check
+if [ -z "${SHIM_SRC}" ] || [ ! -f "${SHIM_SRC}" ]; then
+    echo "ERROR: shimx64.efi could not be located anywhere in image, target, or build subtrees!"
+    echo "Diagnostic: Contents of ${BINARIES_DIR}:"
+    ls -la "${BINARIES_DIR}"
     exit 1
+else
+    echo "POST-IMAGE: Found shim target source path at: ${SHIM_SRC}"
 fi
 
 if [ ! -f "${BINARIES_DIR}/grub.efi" ]; then
@@ -33,7 +50,6 @@ if [ ! -f "${BINARIES_DIR}/grub.efi" ]; then
 fi
 
 # 2. Setup staging targets
-# Copy Shim from our newly found source location path
 cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
 cp "${BINARIES_DIR}/grub.efi" "${EFI_DIR}/grubx64.efi"
 cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
@@ -44,16 +60,18 @@ SB_CRT="${BOARD_DIR}/keys/db.crt"
 
 if [ -f "$SB_KEY" ] && [ -f "$SB_CRT" ] && command -v sbsign >/dev/null 2>&1; then
     echo "POST-IMAGE: Secure Boot keys found. Signing binaries..."
-    
-    # Note: Shim itself shouldn't be signed by your DB key (it's typically signed by MS or left as-is depending on your PK deployment)
-    # But GRUB and your kernel MUST be signed by your DB key so Shim accepts them!
     sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
+    
+    # Ensure staging sub-directory for bzImage copy path exists
+    mkdir -p "${BINARIES_DIR}/efi-part"
     sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${BINARIES_DIR}/efi-part/bzImage" "${BINARIES_DIR}/bzImage"
     
     echo "POST-IMAGE: Verification Signatures generated cleanly."
 else
     echo "POST-IMAGE: WARNING: Secure Boot keys or sbsign tool missing! Copying unsigned kernels."
+    mkdir -p "${BINARIES_DIR}/efi-part"
     cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 fi
 
-echo "POST-IMAGE: Running genimage to pack the target filesystem image..."
+echo "POST-IMAGE: Running genimage helper to pack target..."
+support/scripts/genimage.sh "$@"
