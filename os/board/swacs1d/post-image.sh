@@ -6,59 +6,59 @@ BINARIES_DIR="$1"
 BOARD_DIR="board/swacs1d"
 EFI_DIR="${BINARIES_DIR}/efi-part/EFI/BOOT"
 
-# Compute the absolute path to Buildroot's build directory
-BUILD_DIR="$(cd "${BINARIES_DIR}/../build" && pwd)"
-
 echo "POST-IMAGE: Preparing Custom Shim + Grub Secure Boot structure..."
 
 # Create clean execution targets
 mkdir -p "${EFI_DIR}"
 mkdir -p "${BINARIES_DIR}/efi-part"
 
-# 1. Locate Shim inside Buildroot's package build directory
-echo "POST-IMAGE: Searching for compiled shim binary..."
-SHIM_SRC=$(find "${BUILD_DIR}" -type f -name "shimx64.efi" | head -n 1)
-
-if [ -n "${SHIM_SRC}" ] && [ -f "${SHIM_SRC}" ]; then
-    echo "POST-IMAGE: Located Shim at: ${SHIM_SRC}"
+# 1. Locate Shim inside Buildroot's core images directory
+SHIM_SRC=""
+if [ -f "${BINARIES_DIR}/shim.efi" ]; then
+    SHIM_SRC="${BINARIES_DIR}/shim.efi"
+elif [ -f "${BINARIES_DIR}/shimx64.efi" ]; then
+    SHIM_SRC="${BINARIES_DIR}/shimx64.efi"
 else
-    echo "ERROR: shimx64.efi was not found in ${BUILD_DIR}. Ensure BR2_PACKAGE_SHIM=y is built."
+    echo "ERROR: Neither shim.efi nor shimx64.efi was found in ${BINARIES_DIR}!"
+    echo "Double-check your defconfig contains: BR2_TARGET_SHIM=y"
     exit 1
 fi
 
-# 2. Verify Grub exists (Buildroot default outputs it into efi-part/EFI/BOOT/bootx64.efi)
+echo "POST-IMAGE: Located valid Shim binary at: ${SHIM_SRC}"
+
+# 2. Verify Grub exists (Buildroot automatically generates it here)
 ORIG_GRUB="${BINARIES_DIR}/efi-part/EFI/BOOT/bootx64.efi"
 if [ ! -f "${ORIG_GRUB}" ]; then
     echo "ERROR: Original Grub binary not found at ${ORIG_GRUB}!"
     exit 1
 fi
 
-# 3. Re-arrange files to fit the strict Shim loading order
-# Copy Shim to the primary boot file position
+# 3. Arrange filesystem files to map standard UEFI Shim execution layouts
+# Copy the verified Shim source into the primary fall-through load position
 cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
 
-# Move the original Grub binary right next to it, named exactly what Shim expects
+# Move the default Grub binary right beside it under the filename Shim expects
 mv "${ORIG_GRUB}" "${EFI_DIR}/grubx64.efi"
 
-# Make sure the config profile is copied over
+# Pull custom Grub target menus over
 cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
 
-# 4. Handle Secure Boot Cryptographic Signing Operations
+# 4. Handle Cryptographic Code Signing Routines
 SB_KEY="${BOARD_DIR}/keys/db.key"
 SB_CRT="${BOARD_DIR}/keys/db.crt"
 
 if [ -f "$SB_KEY" ] && [ -f "$SB_CRT" ] && command -v sbsign >/dev/null 2>&1; then
-    echo "POST-IMAGE: Keys verified. Signing binaries..."
+    echo "POST-IMAGE: Verification keys discovered. Signing runtime binaries..."
     
-    # Sign GRUB and the Linux Kernel with your private keys so Shim authorizes them
+    # Sign GRUB and your kernel with your platform keys so Shim authorizes them at boot
     sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
     sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${BINARIES_DIR}/efi-part/bzImage" "${BINARIES_DIR}/bzImage"
     
-    echo "POST-IMAGE: Cryptographic validation completed."
+    echo "POST-IMAGE: Cryptographic validation steps completed safely."
 else
-    echo "POST-IMAGE: WARNING: Secure Boot keys or sbsign tool missing! Packing unsigned payloads."
+    echo "POST-IMAGE: WARNING: Secure Boot signing keys or sbsign tool missing! Packaging unsigned files."
     cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 fi
 
-echo "POST-IMAGE: Executing genimage configuration wrapper..."
+echo "POST-IMAGE: Formatting system image partitions via genimage wrapper..."
 support/scripts/genimage.sh "$@"
