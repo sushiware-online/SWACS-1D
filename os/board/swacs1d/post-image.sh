@@ -5,6 +5,7 @@ set -e
 BINARIES_DIR="$1"
 BOARD_DIR="board/swacs1d"
 EFI_DIR="${BINARIES_DIR}/efi-part/EFI/BOOT"
+TARGET_DIR="output/target"  # Add a reference to the compiled target rootfs directory
 
 echo "POST-IMAGE: Preparing Secure Boot EFI directory structure..."
 
@@ -12,9 +13,17 @@ echo "POST-IMAGE: Preparing Secure Boot EFI directory structure..."
 rm -rf "${BINARIES_DIR}/efi-part"
 mkdir -p "${EFI_DIR}"
 
-# 1. Verify build deliverables exist
-if [ ! -f "${BINARIES_DIR}/shimx64.efi" ]; then
-    echo "ERROR: shimx64.efi not found in ${BINARIES_DIR}! Check BR2_PACKAGE_SHIM."
+# 1. Locate and Verify shimx64.efi (Check Target Root FS install path first)
+SHIM_SRC=""
+if [ -f "${BINARIES_DIR}/shimx64.efi" ]; then
+    SHIM_SRC="${BINARIES_DIR}/shimx64.efi"
+elif [ -f "${TARGET_DIR}/usr/lib/shim/shimx64.efi" ]; then
+    SHIM_SRC="${TARGET_DIR}/usr/lib/shim/shimx64.efi"
+elif [ -f "output/build/shim-custom/shimx64.efi" ]; then
+    # Fallback catch-all for direct custom compilation trees
+    SHIM_SRC="output/build/shim-custom/shimx64.efi"
+else
+    echo "ERROR: shimx64.efi could not be located in images or target spaces!"
     exit 1
 fi
 
@@ -24,11 +33,9 @@ if [ ! -f "${BINARIES_DIR}/grub.efi" ]; then
 fi
 
 # 2. Setup staging targets
-# Shim becomes the fallback primary target standard UEFI platforms seek out
-cp "${BINARIES_DIR}/shimx64.efi" "${EFI_DIR}/BOOTX64.EFI"
-# Clean copy of Grub stored exactly where Shim looks to forward validation execution
+# Copy Shim from our newly found source location path
+cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
 cp "${BINARIES_DIR}/grub.efi" "${EFI_DIR}/grubx64.efi"
-# Copy configuration profile
 cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
 
 # 3. Handle Binary Code Signing Operations
