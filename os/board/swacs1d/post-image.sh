@@ -6,72 +6,59 @@ BINARIES_DIR="$1"
 BOARD_DIR="board/swacs1d"
 EFI_DIR="${BINARIES_DIR}/efi-part/EFI/BOOT"
 
-# Dynamically compute Buildroot base directory locations safely
-BASE_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-OUTPUT_DIR="${BINARIES_DIR}/.."
-TARGET_DIR="${OUTPUT_DIR}/target"
-BUILD_DIR="${OUTPUT_DIR}/build"
+# Compute the absolute path to Buildroot's build directory
+BUILD_DIR="$(cd "${BINARIES_DIR}/../build" && pwd)"
 
-echo "POST-IMAGE: Preparing Secure Boot EFI directory structure..."
+echo "POST-IMAGE: Preparing Custom Shim + Grub Secure Boot structure..."
 
-# Clear out any old configuration debris and rebuild clean folders
-rm -rf "${BINARIES_DIR}/efi-part"
+# Create clean execution targets
 mkdir -p "${EFI_DIR}"
+mkdir -p "${BINARIES_DIR}/efi-part"
 
-# 1. Broad Lookup Matrix for shimx64.efi
-SHIM_SRC=""
-if [ -f "${BINARIES_DIR}/shimx64.efi" ]; then
-    SHIM_SRC="${BINARIES_DIR}/shimx64.efi"
-elif [ -f "${TARGET_DIR}/usr/lib/shim/shimx64.efi" ]; then
-    SHIM_SRC="${TARGET_DIR}/usr/lib/shim/shimx64.efi"
-elif [ -f "${TARGET_DIR}/boot/shimx64.efi" ]; then
-    SHIM_SRC="${TARGET_DIR}/boot/shimx64.efi"
+# 1. Locate Shim inside Buildroot's package build directory
+echo "POST-IMAGE: Searching for compiled shim binary..."
+SHIM_SRC=$(find "${BUILD_DIR}" -type f -name "shimx64.efi" | head -n 1)
+
+if [ -n "${SHIM_SRC}" ] && [ -f "${SHIM_SRC}" ]; then
+    echo "POST-IMAGE: Located Shim at: ${SHIM_SRC}"
 else
-    # CI/CD Failover: Search inside the compiled build package direct tree space
-    SHIM_FIND=$(find "${BUILD_DIR}" -type f -name "shimx64.efi" | head -n 1)
-    if [ -n "${SHIM_FIND}" ] && [ -f "${SHIM_FIND}" ]; then
-        SHIM_SRC="${SHIM_FIND}"
-    fi
-fi
-
-# Sanity Check
-if [ -z "${SHIM_SRC}" ] || [ ! -f "${SHIM_SRC}" ]; then
-    echo "ERROR: shimx64.efi could not be located anywhere in image, target, or build subtrees!"
-    echo "Diagnostic: Contents of ${BINARIES_DIR}:"
-    ls -la "${BINARIES_DIR}"
-    exit 1
-else
-    echo "POST-IMAGE: Found shim target source path at: ${SHIM_SRC}"
-fi
-
-if [ ! -f "${BINARIES_DIR}/grub.efi" ]; then
-    echo "ERROR: grub.efi not found in ${BINARIES_DIR}! Check BR2_TARGET_GRUB2."
+    echo "ERROR: shimx64.efi was not found in ${BUILD_DIR}. Ensure BR2_PACKAGE_SHIM=y is built."
     exit 1
 fi
 
-# 2. Setup staging targets
+# 2. Verify Grub exists (Buildroot default outputs it into efi-part/EFI/BOOT/bootx64.efi)
+ORIG_GRUB="${BINARIES_DIR}/efi-part/EFI/BOOT/bootx64.efi"
+if [ ! -f "${ORIG_GRUB}" ]; then
+    echo "ERROR: Original Grub binary not found at ${ORIG_GRUB}!"
+    exit 1
+fi
+
+# 3. Re-arrange files to fit the strict Shim loading order
+# Copy Shim to the primary boot file position
 cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
-cp "${BINARIES_DIR}/grub.efi" "${EFI_DIR}/grubx64.efi"
+
+# Move the original Grub binary right next to it, named exactly what Shim expects
+mv "${ORIG_GRUB}" "${EFI_DIR}/grubx64.efi"
+
+# Make sure the config profile is copied over
 cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
 
-# 3. Handle Binary Code Signing Operations
+# 4. Handle Secure Boot Cryptographic Signing Operations
 SB_KEY="${BOARD_DIR}/keys/db.key"
 SB_CRT="${BOARD_DIR}/keys/db.crt"
 
 if [ -f "$SB_KEY" ] && [ -f "$SB_CRT" ] && command -v sbsign >/dev/null 2>&1; then
-    echo "POST-IMAGE: Secure Boot keys found. Signing binaries..."
-    sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
+    echo "POST-IMAGE: Keys verified. Signing binaries..."
     
-    # Ensure staging sub-directory for bzImage copy path exists
-    mkdir -p "${BINARIES_DIR}/efi-part"
+    # Sign GRUB and the Linux Kernel with your private keys so Shim authorizes them
+    sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
     sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${BINARIES_DIR}/efi-part/bzImage" "${BINARIES_DIR}/bzImage"
     
-    echo "POST-IMAGE: Verification Signatures generated cleanly."
+    echo "POST-IMAGE: Cryptographic validation completed."
 else
-    echo "POST-IMAGE: WARNING: Secure Boot keys or sbsign tool missing! Copying unsigned kernels."
-    mkdir -p "${BINARIES_DIR}/efi-part"
+    echo "POST-IMAGE: WARNING: Secure Boot keys or sbsign tool missing! Packing unsigned payloads."
     cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 fi
 
-echo "POST-IMAGE: Running genimage helper to pack target..."
+echo "POST-IMAGE: Executing genimage configuration wrapper..."
 support/scripts/genimage.sh "$@"
