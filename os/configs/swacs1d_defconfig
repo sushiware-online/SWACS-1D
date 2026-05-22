@@ -89,4 +89,4 @@ BR2_ROOTFS_OVERLAY="board/swacs1d/rootfs_overlay"
 BR2_CCACHE=y
 
 # Enable the Shim bootloader
-BR2_PACKAGE_SHIM=y
+BR2_TARGER_SHIM=y
