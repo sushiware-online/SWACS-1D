@@ -45,6 +45,14 @@ else
     echo "WARNING: ${BOARD_DIR}/grub.cfg not found, keeping default Buildroot grub.cfg if present."
 fi
 
+# Step D: Deploy Shim DER Certificate for Option A (MOK / MokManager fallback)
+if [ -f "${BOARD_DIR}/keys/shim.der" ]; then
+    echo "POST-IMAGE: Deploying shim.der to EFI partition as MOK.der..."
+    cp "${BOARD_DIR}/keys/shim.der" "${EFI_DIR}/MOK.der"
+else
+    echo "WARNING: ${BOARD_DIR}/keys/shim.der not found! Skipping MOK storage deployment."
+fi
+
 # 4. Handle Cryptographic Code Signing Routines
 SHIM_KEY="${BOARD_DIR}/keys/shim.key"
 SHIM_CRT="${BOARD_DIR}/keys/shim.crt"
