@@ -104,7 +104,7 @@ jobs:
       - name: Zip Provisioning Keys
         run: |
           cd authoring
-          # Copy everything from the key repository target directory
+          # Copy standard Secure Boot and DB provisioning keys
           cp ../os/board/swacs1d/keys/db.crt .
           cp ../os/board/swacs1d/keys/db.der .
           cp ../os/board/swacs1d/keys/KEK.crt .
@@ -113,6 +113,17 @@ jobs:
           cp ../os/board/swacs1d/keys/PK.der .
           
           zip test_factory_provision_keys.zip update_private.pem update_public.pem update_aes.key db.crt db.der KEK.crt KEK.der PK.crt PK.der
+
+      - name: Zip Separate Shim Keys
+        run: |
+          cd authoring
+          # Copy your dedicated Shim verification assets
+          cp ../os/board/swacs1d/keys/shim.key . 2>/dev/null || echo "shim.key not found, skipping"
+          cp ../os/board/swacs1d/keys/shim.crt . 2>/dev/null || echo "shim.crt not found, skipping"
+          cp ../os/board/swacs1d/keys/shim.der . 2>/dev/null || echo "shim.der not found, skipping"
+          
+          # Create a separate bundle exclusively containing the independent Shim authority keys
+          zip shim_secure_boot_keys.zip shim.key shim.crt shim.der
 
       - name: Clone Buildroot
         run: |
@@ -173,6 +184,7 @@ jobs:
             authoring/factory_provision.tar.zst
             authoring/update_v101.bundle
             authoring/test_factory_provision_keys.zip
+            authoring/shim_secure_boot_keys.zip
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
@@ -186,3 +198,4 @@ jobs:
             authoring/factory_provision.tar.zst
             authoring/update_v101.bundle
             authoring/test_factory_provision_keys.zip
+            authoring/shim_secure_boot_keys.zip

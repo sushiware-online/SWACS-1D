@@ -8,10 +8,6 @@ EFI_DIR="${BINARIES_DIR}/efi-part/EFI/BOOT"
 
 echo "POST-IMAGE: Preparing Custom Shim + Grub Secure Boot structure..."
 
-# Create clean execution targets
-mkdir -p "${EFI_DIR}"
-mkdir -p "${BINARIES_DIR}/efi-part"
-
 # 1. Locate Shim inside Buildroot's core images directory
 SHIM_SRC=""
 if [ -f "${BINARIES_DIR}/shim.efi" ]; then
@@ -34,30 +30,54 @@ if [ ! -f "${ORIG_GRUB}" ]; then
 fi
 
 # 3. Arrange filesystem files to map standard UEFI Shim execution layouts
-# Copy the verified Shim source into the primary fall-through load position
-cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
+mkdir -p "${EFI_DIR}"
 
-# Move the default Grub binary right beside it under the filename Shim expects
+# Step A: Move the default Grub binary out of the way first, under the filename Shim expects
 mv "${ORIG_GRUB}" "${EFI_DIR}/grubx64.efi"
 
-# Pull custom Grub target menus over
-cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
+# Step B: Copy the verified Shim source into the primary UEFI fall-through position (BOOTX64.EFI)
+cp "${SHIM_SRC}" "${EFI_DIR}/BOOTX64.EFI"
+
+# Step C: Pull custom Grub target menus over
+if [ -f "${BOARD_DIR}/grub.cfg" ]; then
+    cp "${BOARD_DIR}/grub.cfg" "${EFI_DIR}/grub.cfg"
+else
+    echo "WARNING: ${BOARD_DIR}/grub.cfg not found, keeping default Buildroot grub.cfg if present."
+fi
 
 # 4. Handle Cryptographic Code Signing Routines
-SB_KEY="${BOARD_DIR}/keys/db.key"
-SB_CRT="${BOARD_DIR}/keys/db.crt"
+SHIM_KEY="${BOARD_DIR}/keys/shim.key"
+SHIM_CRT="${BOARD_DIR}/keys/shim.crt"
 
-if [ -f "$SB_KEY" ] && [ -f "$SB_CRT" ] && command -v sbsign >/dev/null 2>&1; then
-    echo "POST-IMAGE: Verification keys discovered. Signing runtime binaries..."
+DB_KEY="${BOARD_DIR}/keys/db.key"
+DB_CRT="${BOARD_DIR}/keys/db.crt"
+
+# Always stage the kernel image to the target partition first
+cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
+
+if command -v sbsign >/dev/null 2>&1; then
+    echo "POST-IMAGE: sbsign tool discovered. Checking keys..."
     
-    # Sign GRUB and your kernel with your platform keys so Shim authorizes them at boot
-    sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
-    sbsign --key "$SB_KEY" --cert "$SB_CRT" --output "${BINARIES_DIR}/efi-part/bzImage" "${BINARIES_DIR}/bzImage"
+    # Sign Shim (BOOTX64.EFI) using the separate, dedicated Shim keys
+    if [ -f "$SHIM_KEY" ] && [ -f "$SHIM_CRT" ]; then
+        echo "POST-IMAGE: Signing BOOTX64.EFI (Shim) with dedicated Shim keys..."
+        sbsign --key "$SHIM_KEY" --cert "$SHIM_CRT" --output "${EFI_DIR}/BOOTX64.EFI" "${EFI_DIR}/BOOTX64.EFI"
+    else
+        echo "POST-IMAGE: WARNING: Dedicated Shim keys missing. BOOTX64.EFI left unsigned."
+    fi
+
+    # Sign GRUB and your kernel with your downstream standard DB keys
+    if [ -f "$DB_KEY" ] && [ -f "$DB_CRT" ]; then
+        echo "POST-IMAGE: Signing grubx64.efi and bzImage with DB keys..."
+        sbsign --key "$DB_KEY" --cert "$DB_CRT" --output "${EFI_DIR}/grubx64.efi" "${EFI_DIR}/grubx64.efi"
+        sbsign --key "$DB_KEY" --cert "$DB_CRT" --output "${BINARIES_DIR}/efi-part/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
+    else
+        echo "POST-IMAGE: WARNING: DB keys missing. GRUB and Kernel left unsigned."
+    fi
     
-    echo "POST-IMAGE: Cryptographic validation steps completed safely."
+    echo "POST-IMAGE: Cryptographic validation steps completed."
 else
-    echo "POST-IMAGE: WARNING: Secure Boot signing keys or sbsign tool missing! Packaging unsigned files."
-    cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
+    echo "POST-IMAGE: WARNING: sbsign tool missing! Packaging unsigned files."
 fi
 
 echo "POST-IMAGE: Formatting system image partitions via genimage wrapper..."
