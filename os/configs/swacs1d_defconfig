@@ -73,7 +73,7 @@ BR2_PACKAGE_ZSTD=y
 # Bootloader
 BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_X86_64_EFI=y
-BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_gpt normal efi_gop chain"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_gpt normal efi_gop chain tpm"
 BR2_TARGET_GRUB2_CONFIG_OPTIONS="--enable-shim-lock"
 
 # Image Generation & Scripts
