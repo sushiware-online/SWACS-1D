@@ -40,6 +40,26 @@ jobs:
           key: br-ccache-${{ hashFiles('os/configs/swacs1d_defconfig') }}
           restore-keys: br-ccache-
 
+      # IMPORTANT: Secure Boot (PK/KEK/db/shim) and update (RSA/AES) keys must
+      # stay IDENTICAL across every build that gets released. Otherwise each
+      # release's swacs1d.img is signed with different keys than the
+      # test_factory_provision_keys.zip published alongside it, and users
+      # enrolling those keys into their firmware will get Secure Boot
+      # verification failures. init_keys.sh only generates a key if the file
+      # doesn't already exist, so restoring this cache BEFORE running it is
+      # what makes keys persist across runs instead of being reminted every
+      # single build.
+      #
+      # NOTE: bump KEY_CACHE_VERSION below (e.g. v1 -> v2) only if you
+      # deliberately want to rotate all Secure Boot / update keys. Doing so
+      # will make old boards' enrolled firmware keys and old signed update
+      # bundles incompatible with new releases.
+      - name: Restore Secure Boot / Update Keys
+        uses: actions/cache/restore@v4
+        with:
+          path: os/board/swacs1d/keys
+          key: swacs1d-keys-v1
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -74,6 +94,16 @@ jobs:
         run: |
           chmod +x authoring/init_keys.sh
           ./authoring/init_keys.sh
+
+      # Persist whatever keys exist right after init_keys.sh runs - either
+      # the restored ones (no-op re-save, cheap) or freshly generated ones on
+      # the very first run ever. Every subsequent build then reuses these.
+      - name: Save Secure Boot / Update Keys
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: os/board/swacs1d/keys
+          key: swacs1d-keys-v1
 
       - name: Create Factory Provision (v1.00)
         run: |
